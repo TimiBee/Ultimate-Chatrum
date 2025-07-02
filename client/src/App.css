@@ -3,6 +3,9 @@
   margin: 0 auto;
   padding: 2rem;
   text-align: center;
+  background: #181a20;
+  border-radius: 16px;
+  box-shadow: 0 4px 32px 0 #00000040;
 }
 
 .logo {
@@ -10,9 +13,10 @@
   padding: 1.5em;
   will-change: filter;
   transition: filter 300ms;
+  filter: drop-shadow(0 0 2em #4f8cff80);
 }
 .logo:hover {
-  filter: drop-shadow(0 0 2em #646cffaa);
+  filter: drop-shadow(0 0 2em #4f8cffcc);
 }
 .logo.react:hover {
   filter: drop-shadow(0 0 2em #61dafbaa);
@@ -35,6 +39,10 @@
 
 .card {
   padding: 2em;
+  background: #23272f;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px 0 #00000020;
+  color: #f5f5f5;
 }
 
 .read-the-docs {
