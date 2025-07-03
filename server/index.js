@@ -5,6 +5,7 @@ const { Server } = require('socket.io');
 const cors = require('cors');
 const { createPool } = require('mysql2');
 const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken');
 require('dotenv').config();
 
 const app = express();
@@ -38,6 +39,18 @@ pool.getConnection((err, connection) => {
   console.log('Connected to MySQL');
   connection.release();
 });
+
+// Middleware to verify JWT
+function authenticateToken(req, res, next) {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+  if (!token) return res.status(401).json({ error: 'No token provided.' });
+  jwt.verify(token, process.env.JWT_SECRET || 'supersecretkey', (err, user) => {
+    if (err) return res.status(403).json({ error: 'Invalid token.' });
+    req.user = user;
+    next();
+  });
+}
 
 // Socket.IO events
 io.on('connection', (socket) => {
@@ -107,21 +120,34 @@ app.post('/api/login', (req, res) => {
     const user = results[0];
     const match = await bcrypt.compare(password, user.password);
     if (!match) return res.status(401).json({ error: 'Invalid credentials.' });
-    res.json({ message: 'Login successful.', user: { id: user.id, username: user.username } });
+    // Generate JWT
+    const token = jwt.sign({ id: user.id, username: user.username }, process.env.JWT_SECRET || 'supersecretkey', { expiresIn: '1h' });
+    res.json({ message: 'Login successful.', user: { id: user.id, username: user.username }, token });
   });
 });
 
-// API endpoint to fetch recent messages
-app.get('/api/messages', (req, res) => {
+// Protect messages endpoint
+app.get('/api/messages', authenticateToken, (req, res) => {
   const limit = parseInt(req.query.limit) || 50;
   pool.query(
     'SELECT messages.id, messages.content, messages.created_at, users.username FROM messages JOIN users ON messages.user_id = users.id ORDER BY messages.created_at DESC LIMIT ?',
     [limit],
     (err, rows) => {
       if (err) return res.status(500).json({ error: 'Database error.' });
-      res.json(rows.reverse()); // reverse to get oldest first
+      res.json(rows.reverse());
     }
   );
+});
+
+// Socket.IO JWT auth
+io.use((socket, next) => {
+  const token = socket.handshake.auth.token;
+  if (!token) return next(new Error('No token provided.'));
+  jwt.verify(token, process.env.JWT_SECRET || 'supersecretkey', (err, user) => {
+    if (err) return next(new Error('Invalid token.'));
+    socket.user = user;
+    next();
+  });
 });
 
 const PORT = process.env.PORT || 5000;

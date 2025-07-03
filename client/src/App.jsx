@@ -12,6 +12,7 @@ function App() {
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const [user, setUser] = useState(null)
+  const [token, setToken] = useState(null)
   const [messages, setMessages] = useState([])
   const [message, setMessage] = useState('')
   const socketRef = useRef(null)
@@ -22,24 +23,34 @@ function App() {
 
   // Fetch messages and connect to socket after login
   useEffect(() => {
-    if (user) {
+    if (user && token) {
       setMessagesLoading(true)
       setMessagesError('')
-      fetch('/api/messages')
-        .then(res => res.json())
+      fetch('/api/messages', {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+        .then(res => {
+          if (!res.ok) throw new Error('Unauthorized')
+          return res.json()
+        })
         .then(data => setMessages(data))
         .catch(() => setMessagesError('Failed to load messages.'))
         .finally(() => setMessagesLoading(false))
-      // Connect to socket
-      socketRef.current = io(SOCKET_URL)
+      // Connect to socket with token
+      socketRef.current = io(SOCKET_URL, {
+        auth: { token }
+      })
       socketRef.current.on('chat message', (msg) => {
         setMessages(prev => [...prev, msg])
+      })
+      socketRef.current.on('connect_error', (err) => {
+        setMessagesError('Socket authentication failed.')
       })
       return () => {
         socketRef.current.disconnect()
       }
     }
-  }, [user])
+  }, [user, token])
 
   // Scroll to bottom on new message
   useEffect(() => {
@@ -64,7 +75,10 @@ function App() {
         setError(data.error || 'Something went wrong')
       } else {
         setSuccess(data.message)
-        if (mode === 'login') setUser(data.user)
+        if (mode === 'login') {
+          setUser(data.user)
+          setToken(data.token)
+        }
         setUsername('')
         setPassword('')
       }
@@ -96,7 +110,7 @@ function App() {
     return (
       <div className="card" style={{ maxWidth: 500, margin: '2rem auto' }}>
         <h2>Welcome, {user.username}!</h2>
-        <button style={{ float: 'right', marginBottom: 8, background: '#23272f', color: '#ff4d4f', border: '1px solid #ff4d4f' }} onClick={() => setUser(null)}>
+        <button style={{ float: 'right', marginBottom: 8, background: '#23272f', color: '#ff4d4f', border: '1px solid #ff4d4f' }} onClick={() => { setUser(null); setToken(null); }}>
           Logout
         </button>
         <div style={{
