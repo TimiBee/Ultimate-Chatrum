@@ -86,6 +86,9 @@ function App() {
     return (
       <div className="card" style={{ maxWidth: 500, margin: '2rem auto' }}>
         <h2>Welcome, {user.username}!</h2>
+        <button style={{ float: 'right', marginBottom: 8, background: '#23272f', color: '#ff4d4f', border: '1px solid #ff4d4f' }} onClick={() => setUser(null)}>
+          Logout
+        </button>
         <div style={{
           background: '#23272f',
           borderRadius: 8,
