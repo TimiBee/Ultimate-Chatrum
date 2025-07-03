@@ -16,15 +16,20 @@ function App() {
   const [message, setMessage] = useState('')
   const socketRef = useRef(null)
   const chatEndRef = useRef(null)
+  const [messagesLoading, setMessagesLoading] = useState(false)
+  const [messagesError, setMessagesError] = useState('')
+  const [sendError, setSendError] = useState('')
 
   // Fetch messages and connect to socket after login
   useEffect(() => {
     if (user) {
-      // Fetch message history
+      setMessagesLoading(true)
+      setMessagesError('')
       fetch('/api/messages')
         .then(res => res.json())
         .then(data => setMessages(data))
-        .catch(() => setMessages([]))
+        .catch(() => setMessagesError('Failed to load messages.'))
+        .finally(() => setMessagesLoading(false))
       // Connect to socket
       socketRef.current = io(SOCKET_URL)
       socketRef.current.on('chat message', (msg) => {
@@ -72,13 +77,18 @@ function App() {
 
   const handleSend = (e) => {
     e.preventDefault()
+    setSendError('')
     if (!message.trim()) return
     if (socketRef.current) {
-      socketRef.current.emit('chat message', {
-        userId: user.id,
-        content: message
-      })
-      setMessage('')
+      try {
+        socketRef.current.emit('chat message', {
+          userId: user.id,
+          content: message
+        })
+        setMessage('')
+      } catch (err) {
+        setSendError('Failed to send message.')
+      }
     }
   }
 
@@ -99,13 +109,19 @@ function App() {
           display: 'flex',
           flexDirection: 'column'
         }}>
-          {messages.map((msg, idx) => (
-            <div key={msg.id || idx} style={{ marginBottom: 8 }}>
-              <span style={{ color: '#4f8cff', fontWeight: 'bold' }}>{msg.username}</span>
-              <span style={{ color: '#888', fontSize: 12, marginLeft: 8 }}>{new Date(msg.created_at).toLocaleTimeString()}</span>
-              <div style={{ color: '#f5f5f5' }}>{msg.content}</div>
-            </div>
-          ))}
+          {messagesLoading ? (
+            <div style={{ color: '#888', textAlign: 'center', marginTop: 40 }}>Loading messages...</div>
+          ) : messagesError ? (
+            <div style={{ color: '#ff4d4f', textAlign: 'center', marginTop: 40 }}>{messagesError}</div>
+          ) : (
+            messages.map((msg, idx) => (
+              <div key={msg.id || idx} style={{ marginBottom: 8 }}>
+                <span style={{ color: '#4f8cff', fontWeight: 'bold' }}>{msg.username}</span>
+                <span style={{ color: '#888', fontSize: 12, marginLeft: 8 }}>{new Date(msg.created_at).toLocaleTimeString()}</span>
+                <div style={{ color: '#f5f5f5' }}>{msg.content}</div>
+              </div>
+            ))
+          )}
           <div ref={chatEndRef} />
         </div>
         <form onSubmit={handleSend} style={{ display: 'flex', gap: 8 }}>
@@ -119,6 +135,7 @@ function App() {
           />
           <button type="submit" style={{ minWidth: 80 }}>Send</button>
         </form>
+        {sendError && <div style={{ color: '#ff4d4f', marginTop: 8 }}>{sendError}</div>}
       </div>
     )
   }
