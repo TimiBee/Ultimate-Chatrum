@@ -214,6 +214,14 @@ app.get('/api/profile', authenticateToken, (req, res) => {
   });
 });
 
+// Get all users except current user
+app.get('/api/users', authenticateToken, (req, res) => {
+  pool.query('SELECT id, username, avatar_url, status FROM users WHERE id != ?', [req.user.id], (err, results) => {
+    if (err) return res.status(500).json({ error: 'Database error.' });
+    res.json(results);
+  });
+});
+
 // Multer setup for avatar uploads
 const avatarStorage = multer.diskStorage({
   destination: function (req, file, cb) {
