@@ -7,6 +7,8 @@ const { createPool } = require('mysql2');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const path = require('path');
+const multer = require('multer');
+const fs = require('fs');
 require('dotenv').config();
 
 const app = express();
@@ -154,6 +156,74 @@ io.use((socket, next) => {
     next();
   });
 });
+
+// Update user profile (avatar_url, status)
+app.put('/api/profile', authenticateToken, (req, res) => {
+  const userId = req.user.id;
+  const { avatar_url, status } = req.body;
+  if (!avatar_url && !status) {
+    return res.status(400).json({ error: 'No fields to update.' });
+  }
+  // Build dynamic query
+  const fields = [];
+  const values = [];
+  if (avatar_url !== undefined) {
+    fields.push('avatar_url = ?');
+    values.push(avatar_url);
+  }
+  if (status !== undefined) {
+    fields.push('status = ?');
+    values.push(status);
+  }
+  values.push(userId);
+  const sql = `UPDATE users SET ${fields.join(', ')} WHERE id = ?`;
+  pool.query(sql, values, (err, result) => {
+    if (err) return res.status(500).json({ error: 'Database error.' });
+    res.json({ message: 'Profile updated.' });
+  });
+});
+
+// Get current user profile
+app.get('/api/profile', authenticateToken, (req, res) => {
+  pool.query('SELECT avatar_url, status FROM users WHERE id = ?', [req.user.id], (err, results) => {
+    if (err) return res.status(500).json({ error: 'Database error.' });
+    if (!results.length) return res.status(404).json({ error: 'User not found.' });
+    res.json(results[0]);
+  });
+});
+
+// Multer setup for avatar uploads
+const avatarStorage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    cb(null, path.join(__dirname, 'uploads/avatars'));
+  },
+  filename: function (req, file, cb) {
+    const ext = path.extname(file.originalname);
+    cb(null, req.user.id + '_' + Date.now() + ext);
+  }
+});
+const uploadAvatar = multer({ storage: avatarStorage });
+
+// Ensure uploads/avatars directory exists
+const avatarsDir = path.join(__dirname, 'uploads/avatars');
+if (!fs.existsSync(avatarsDir)) {
+  fs.mkdirSync(avatarsDir, { recursive: true });
+}
+
+// Avatar upload endpoint
+app.post('/api/profile/avatar', authenticateToken, uploadAvatar.single('avatar'), (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: 'No file uploaded.' });
+  }
+  const avatarUrl = `/uploads/avatars/${req.file.filename}`;
+  pool.query('UPDATE users SET avatar_url = ? WHERE id = ?', [avatarUrl, req.user.id], (err, result) => {
+    if (err) return res.status(500).json({ error: 'Database error.' });
+    res.json({ message: 'Avatar updated.', avatar_url: avatarUrl });
+  });
+});
+
+// Serve uploaded avatars statically
+app.use('/uploads/avatars', express.static(path.join(__dirname, 'uploads/avatars')));
 
 // Serve static files from the React app
 app.use(express.static(path.join(__dirname, '../client/dist')));

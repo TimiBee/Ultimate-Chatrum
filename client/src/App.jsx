@@ -20,6 +20,11 @@ function App() {
   const [messagesLoading, setMessagesLoading] = useState(false)
   const [messagesError, setMessagesError] = useState('')
   const [sendError, setSendError] = useState('')
+  const [profile, setProfile] = useState({ avatar_url: '', status: '' })
+  const [profileLoading, setProfileLoading] = useState(false)
+  const [profileError, setProfileError] = useState('')
+  const [avatarFile, setAvatarFile] = useState(null)
+  const [statusInput, setStatusInput] = useState('')
 
   // Fetch messages and connect to socket after login
   useEffect(() => {
@@ -58,6 +63,21 @@ function App() {
       chatEndRef.current.scrollIntoView({ behavior: 'smooth' })
     }
   }, [messages])
+
+  // Fetch profile after login
+  useEffect(() => {
+    if (user && token) {
+      setProfileLoading(true)
+      fetch('/api/profile', { headers: { Authorization: `Bearer ${token}` } })
+        .then(res => res.json())
+        .then(data => {
+          setProfile({ avatar_url: data.avatar_url, status: data.status })
+          setStatusInput(data.status || '')
+        })
+        .catch(() => setProfileError('Failed to load profile.'))
+        .finally(() => setProfileLoading(false))
+    }
+  }, [user, token])
 
   const handleSubmit = async (e) => {
     e.preventDefault()
@@ -106,6 +126,55 @@ function App() {
     }
   }
 
+  // Avatar upload handler
+  const handleAvatarUpload = async (e) => {
+    const file = e.target.files[0]
+    if (!file) return
+    setAvatarFile(file)
+    const formData = new FormData()
+    formData.append('avatar', file)
+    setProfileLoading(true)
+    setProfileError('')
+    try {
+      const res = await fetch('/api/profile/avatar', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Upload failed')
+      setProfile(p => ({ ...p, avatar_url: data.avatar_url }))
+    } catch (err) {
+      setProfileError('Failed to upload avatar.')
+    } finally {
+      setProfileLoading(false)
+    }
+  }
+
+  // Status update handler
+  const handleStatusUpdate = async (e) => {
+    e.preventDefault()
+    setProfileLoading(true)
+    setProfileError('')
+    try {
+      const res = await fetch('/api/profile', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ status: statusInput })
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Update failed')
+      setProfile(p => ({ ...p, status: statusInput }))
+    } catch (err) {
+      setProfileError('Failed to update status.')
+    } finally {
+      setProfileLoading(false)
+    }
+  }
+
   if (user) {
     return (
       <div className="card" style={{ maxWidth: 500, margin: '2rem auto' }}>
@@ -113,6 +182,36 @@ function App() {
         <button style={{ float: 'right', marginBottom: 8, background: '#23272f', color: '#ff4d4f', border: '1px solid #ff4d4f' }} onClick={() => { setUser(null); setToken(null); }}>
           Logout
         </button>
+        {/* Profile section */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 16 }}>
+          <img
+            src={profile.avatar_url ? profile.avatar_url : '/default-avatar.png'}
+            alt="avatar"
+            style={{ width: 64, height: 64, borderRadius: '50%', objectFit: 'cover', border: '2px solid #4f8cff' }}
+          />
+          <div>
+            <input type="file" accept="image/*" onChange={handleAvatarUpload} disabled={profileLoading} />
+            {profileLoading && <div style={{ color: '#888' }}>Uploading...</div>}
+            {profileError && <div style={{ color: '#ff4d4f' }}>{profileError}</div>}
+          </div>
+        </div>
+        <form onSubmit={handleStatusUpdate} style={{ marginBottom: 16 }}>
+          <input
+            type="text"
+            placeholder="Set a status..."
+            value={statusInput}
+            onChange={e => setStatusInput(e.target.value)}
+            disabled={profileLoading}
+            style={{ width: '70%' }}
+          />
+          <button type="submit" disabled={profileLoading || statusInput === profile.status} style={{ marginLeft: 8 }}>
+            Update Status
+          </button>
+        </form>
+        <div style={{ color: '#4f8cff', marginBottom: 8 }}>
+          {profile.status && <span>Status: {profile.status}</span>}
+        </div>
+        {/* Chat UI */}
         <div style={{
           background: '#23272f',
           borderRadius: 8,
@@ -129,10 +228,18 @@ function App() {
             <div style={{ color: '#ff4d4f', textAlign: 'center', marginTop: 40 }}>{messagesError}</div>
           ) : (
             messages.map((msg, idx) => (
-              <div key={msg.id || idx} style={{ marginBottom: 8 }}>
-                <span style={{ color: '#4f8cff', fontWeight: 'bold' }}>{msg.username}</span>
-                <span style={{ color: '#888', fontSize: 12, marginLeft: 8 }}>{new Date(msg.created_at).toLocaleTimeString()}</span>
-                <div style={{ color: '#f5f5f5' }}>{msg.content}</div>
+              <div key={msg.id || idx} style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
+                {/* Avatar in chat */}
+                <img
+                  src={profile.avatar_url ? profile.avatar_url : '/default-avatar.png'}
+                  alt="avatar"
+                  style={{ width: 32, height: 32, borderRadius: '50%', objectFit: 'cover', border: '1px solid #4f8cff' }}
+                />
+                <div>
+                  <span style={{ color: '#4f8cff', fontWeight: 'bold' }}>{msg.username}</span>
+                  <span style={{ color: '#888', fontSize: 12, marginLeft: 8 }}>{new Date(msg.created_at).toLocaleTimeString()}</span>
+                  <div style={{ color: '#f5f5f5' }}>{msg.content}</div>
+                </div>
               </div>
             ))
           )}
