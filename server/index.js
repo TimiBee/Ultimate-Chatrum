@@ -59,12 +59,14 @@ function authenticateToken(req, res, next) {
 io.on('connection', (socket) => {
   console.log('A user connected:', socket.id);
 
+  // Public or private message
   socket.on('chat message', async (msg) => {
-    // msg: { userId, content }
+    // msg: { userId, content, recipientId }
     if (!msg || !msg.userId || !msg.content) return;
+    const isPrivate = !!msg.recipientId;
     pool.query(
-      'INSERT INTO messages (user_id, content) VALUES (?, ?)',
-      [msg.userId, msg.content],
+      'INSERT INTO messages (user_id, content, recipient_id) VALUES (?, ?, ?)',
+      [msg.userId, msg.content, msg.recipientId || null],
       (err, result) => {
         if (err) {
           console.error('Error saving message:', err);
@@ -72,15 +74,27 @@ io.on('connection', (socket) => {
         }
         // Fetch the saved message with user info
         pool.query(
-          'SELECT messages.id, messages.content, messages.created_at, users.username FROM messages JOIN users ON messages.user_id = users.id WHERE messages.id = ?',
+          'SELECT messages.id, messages.content, messages.created_at, users.username, messages.recipient_id FROM messages JOIN users ON messages.user_id = users.id WHERE messages.id = ?',
           [result.insertId],
           (err, rows) => {
             if (err) return;
-            io.emit('chat message', rows[0]);
+            const message = rows[0];
+            if (isPrivate) {
+              // Emit only to sender and recipient
+              io.to(`user_${msg.userId}`).emit('private message', message);
+              io.to(`user_${msg.recipientId}`).emit('private message', message);
+            } else {
+              io.emit('chat message', message);
+            }
           }
         );
       }
     );
+  });
+
+  // Join user-specific room for private messages
+  socket.on('join', (userId) => {
+    socket.join(`user_${userId}`);
   });
 
   socket.on('disconnect', () => {
@@ -133,17 +147,25 @@ app.post('/api/login', (req, res) => {
   });
 });
 
-// Protect messages endpoint
+// Fetch public or private messages
 app.get('/api/messages', authenticateToken, (req, res) => {
-  const limit = parseInt(req.query.limit) || 50;
-  pool.query(
-    'SELECT messages.id, messages.content, messages.created_at, users.username FROM messages JOIN users ON messages.user_id = users.id ORDER BY messages.created_at DESC LIMIT ?',
-    [limit],
-    (err, rows) => {
-      if (err) return res.status(500).json({ error: 'Database error.' });
-      res.json(rows.reverse());
-    }
-  );
+  const { recipientId, limit } = req.query;
+  const userId = req.user.id;
+  const lim = parseInt(limit) || 50;
+  let sql, params;
+  if (recipientId) {
+    // Private messages between user and recipient
+    sql = `SELECT messages.id, messages.content, messages.created_at, users.username, messages.recipient_id FROM messages JOIN users ON messages.user_id = users.id WHERE (messages.user_id = ? AND messages.recipient_id = ?) OR (messages.user_id = ? AND messages.recipient_id = ?) ORDER BY messages.created_at DESC LIMIT ?`;
+    params = [userId, recipientId, recipientId, userId, lim];
+  } else {
+    // Public messages
+    sql = `SELECT messages.id, messages.content, messages.created_at, users.username, messages.recipient_id FROM messages JOIN users ON messages.user_id = users.id WHERE messages.recipient_id IS NULL ORDER BY messages.created_at DESC LIMIT ?`;
+    params = [lim];
+  }
+  pool.query(sql, params, (err, rows) => {
+    if (err) return res.status(500).json({ error: 'Database error.' });
+    res.json(rows.reverse());
+  });
 });
 
 // Socket.IO JWT auth
