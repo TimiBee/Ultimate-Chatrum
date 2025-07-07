@@ -6,6 +6,7 @@ const cors = require('cors');
 const { createPool } = require('mysql2');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
+const path = require('path');
 require('dotenv').config();
 
 const app = express();
@@ -87,7 +88,7 @@ io.on('connection', (socket) => {
 
 // User registration endpoint
 app.post('/api/register', async (req, res) => {
-  const { username, password } = req.body;
+  const { username, password, avatar_url, status } = req.body;
   if (!username || !password) {
     return res.status(400).json({ error: 'Username and password are required.' });
   }
@@ -98,10 +99,14 @@ app.post('/api/register', async (req, res) => {
       if (results.length > 0) return res.status(409).json({ error: 'Username already exists.' });
       // Hash password
       const hashedPassword = await bcrypt.hash(password, 10);
-      pool.query('INSERT INTO users (username, password) VALUES (?, ?)', [username, hashedPassword], (err, result) => {
-        if (err) return res.status(500).json({ error: 'Database error.' });
-        res.status(201).json({ message: 'User registered successfully.' });
-      });
+      pool.query(
+        'INSERT INTO users (username, password, avatar_url, status) VALUES (?, ?, ?, ?)',
+        [username, hashedPassword, avatar_url || null, status || null],
+        (err, result) => {
+          if (err) return res.status(500).json({ error: 'Database error.' });
+          res.status(201).json({ message: 'User registered successfully.' });
+        }
+      );
     });
   } catch (e) {
     res.status(500).json({ error: 'Server error.' });
@@ -148,6 +153,14 @@ io.use((socket, next) => {
     socket.user = user;
     next();
   });
+});
+
+// Serve static files from the React app
+app.use(express.static(path.join(__dirname, '../client/dist')));
+
+// Catch-all: send index.html for any route not handled
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, '../client/dist/index.html'));
 });
 
 const PORT = process.env.PORT || 5000;
