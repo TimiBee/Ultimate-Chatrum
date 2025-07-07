@@ -25,13 +25,29 @@ function App() {
   const [profileError, setProfileError] = useState('')
   const [avatarFile, setAvatarFile] = useState(null)
   const [statusInput, setStatusInput] = useState('')
+  const [users, setUsers] = useState([])
+  const [selectedUser, setSelectedUser] = useState(null)
+
+  // Fetch user list after login
+  useEffect(() => {
+    if (user && token) {
+      fetch('/api/users', { headers: { Authorization: `Bearer ${token}` } })
+        .then(res => res.json())
+        .then(setUsers)
+        .catch(() => setUsers([]))
+    }
+  }, [user, token])
 
   // Fetch messages and connect to socket after login
   useEffect(() => {
     if (user && token) {
       setMessagesLoading(true)
       setMessagesError('')
-      fetch('/api/messages', {
+      // Fetch public or private messages
+      const url = selectedUser
+        ? `/api/messages?recipientId=${selectedUser.id}`
+        : '/api/messages'
+      fetch(url, {
         headers: { Authorization: `Bearer ${token}` }
       })
         .then(res => {
@@ -45,8 +61,15 @@ function App() {
       socketRef.current = io(SOCKET_URL, {
         auth: { token }
       })
+      // Join private room
+      socketRef.current.emit('join', user.id)
       socketRef.current.on('chat message', (msg) => {
-        setMessages(prev => [...prev, msg])
+        if (!selectedUser && !msg.recipient_id) setMessages(prev => [...prev, msg])
+      })
+      socketRef.current.on('private message', (msg) => {
+        if (selectedUser && (msg.user_id === selectedUser.id || msg.recipient_id === selectedUser.id)) {
+          setMessages(prev => [...prev, msg])
+        }
       })
       socketRef.current.on('connect_error', (err) => {
         setMessagesError('Socket authentication failed.')
@@ -55,7 +78,7 @@ function App() {
         socketRef.current.disconnect()
       }
     }
-  }, [user, token])
+  }, [user, token, selectedUser])
 
   // Scroll to bottom on new message
   useEffect(() => {
@@ -117,7 +140,8 @@ function App() {
       try {
         socketRef.current.emit('chat message', {
           userId: user.id,
-          content: message
+          content: message,
+          recipientId: selectedUser ? selectedUser.id : undefined
         })
         setMessage('')
       } catch (err) {
@@ -177,86 +201,112 @@ function App() {
 
   if (user) {
     return (
-      <div className="card" style={{ maxWidth: 500, margin: '2rem auto' }}>
-        <h2>Welcome, {user.username}!</h2>
-        <button style={{ float: 'right', marginBottom: 8, background: '#23272f', color: '#ff4d4f', border: '1px solid #ff4d4f' }} onClick={() => { setUser(null); setToken(null); }}>
-          Logout
-        </button>
-        {/* Profile section */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 16 }}>
-          <img
-            src={profile.avatar_url ? profile.avatar_url : '/default-avatar.png'}
-            alt="avatar"
-            style={{ width: 64, height: 64, borderRadius: '50%', objectFit: 'cover', border: '2px solid #4f8cff' }}
-          />
-          <div>
-            <input type="file" accept="image/*" onChange={handleAvatarUpload} disabled={profileLoading} />
-            {profileLoading && <div style={{ color: '#888' }}>Uploading...</div>}
-            {profileError && <div style={{ color: '#ff4d4f' }}>{profileError}</div>}
+      <div className="card" style={{ maxWidth: 700, margin: '2rem auto', display: 'flex', gap: 24 }}>
+        {/* User list for private chat */}
+        <div style={{ minWidth: 180, borderRight: '1px solid #23272f', paddingRight: 16 }}>
+          <h3 style={{ color: '#4f8cff' }}>Users</h3>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <button
+              style={{ background: !selectedUser ? '#23272f' : 'none', color: !selectedUser ? '#fff' : '#4f8cff', border: 'none', borderRadius: 4, padding: 6, cursor: 'pointer' }}
+              onClick={() => setSelectedUser(null)}
+            >
+              # Public Chat
+            </button>
+            {users.map(u => (
+              <button
+                key={u.id}
+                style={{ background: selectedUser && selectedUser.id === u.id ? '#23272f' : 'none', color: selectedUser && selectedUser.id === u.id ? '#fff' : '#4f8cff', border: 'none', borderRadius: 4, padding: 6, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}
+                onClick={() => setSelectedUser(u)}
+              >
+                <img src={u.avatar_url || '/default-avatar.png'} alt="avatar" style={{ width: 24, height: 24, borderRadius: '50%' }} />
+                <span>{u.username}</span>
+                {u.status && <span style={{ color: '#888', fontSize: 12 }}>({u.status})</span>}
+              </button>
+            ))}
           </div>
         </div>
-        <form onSubmit={handleStatusUpdate} style={{ marginBottom: 16 }}>
-          <input
-            type="text"
-            placeholder="Set a status..."
-            value={statusInput}
-            onChange={e => setStatusInput(e.target.value)}
-            disabled={profileLoading}
-            style={{ width: '70%' }}
-          />
-          <button type="submit" disabled={profileLoading || statusInput === profile.status} style={{ marginLeft: 8 }}>
-            Update Status
+        {/* Main chat area */}
+        <div style={{ flex: 1 }}>
+          <h2>{selectedUser ? `Chat with ${selectedUser.username}` : 'Public Chat'}</h2>
+          <button style={{ float: 'right', marginBottom: 8, background: '#23272f', color: '#ff4d4f', border: '1px solid #ff4d4f' }} onClick={() => { setUser(null); setToken(null); }}>
+            Logout
           </button>
-        </form>
-        <div style={{ color: '#4f8cff', marginBottom: 8 }}>
-          {profile.status && <span>Status: {profile.status}</span>}
-        </div>
-        {/* Chat UI */}
-        <div style={{
-          background: '#23272f',
-          borderRadius: 8,
-          padding: 16,
-          height: 300,
-          overflowY: 'auto',
-          marginBottom: 16,
-          display: 'flex',
-          flexDirection: 'column'
-        }}>
-          {messagesLoading ? (
-            <div style={{ color: '#888', textAlign: 'center', marginTop: 40 }}>Loading messages...</div>
-          ) : messagesError ? (
-            <div style={{ color: '#ff4d4f', textAlign: 'center', marginTop: 40 }}>{messagesError}</div>
-          ) : (
-            messages.map((msg, idx) => (
-              <div key={msg.id || idx} style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
-                {/* Avatar in chat */}
-                <img
-                  src={profile.avatar_url ? profile.avatar_url : '/default-avatar.png'}
-                  alt="avatar"
-                  style={{ width: 32, height: 32, borderRadius: '50%', objectFit: 'cover', border: '1px solid #4f8cff' }}
-                />
-                <div>
-                  <span style={{ color: '#4f8cff', fontWeight: 'bold' }}>{msg.username}</span>
-                  <span style={{ color: '#888', fontSize: 12, marginLeft: 8 }}>{new Date(msg.created_at).toLocaleTimeString()}</span>
-                  <div style={{ color: '#f5f5f5' }}>{msg.content}</div>
+          {/* Profile section */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 16 }}>
+            <img
+              src={profile.avatar_url ? profile.avatar_url : '/default-avatar.png'}
+              alt="avatar"
+              style={{ width: 64, height: 64, borderRadius: '50%', objectFit: 'cover', border: '2px solid #4f8cff' }}
+            />
+            <div>
+              <input type="file" accept="image/*" onChange={handleAvatarUpload} disabled={profileLoading} />
+              {profileLoading && <div style={{ color: '#888' }}>Uploading...</div>}
+              {profileError && <div style={{ color: '#ff4d4f' }}>{profileError}</div>}
+            </div>
+          </div>
+          <form onSubmit={handleStatusUpdate} style={{ marginBottom: 16 }}>
+            <input
+              type="text"
+              placeholder="Set a status..."
+              value={statusInput}
+              onChange={e => setStatusInput(e.target.value)}
+              disabled={profileLoading}
+              style={{ width: '70%' }}
+            />
+            <button type="submit" disabled={profileLoading || statusInput === profile.status} style={{ marginLeft: 8 }}>
+              Update Status
+            </button>
+          </form>
+          <div style={{ color: '#4f8cff', marginBottom: 8 }}>
+            {profile.status && <span>Status: {profile.status}</span>}
+          </div>
+          {/* Chat UI */}
+          <div style={{
+            background: '#23272f',
+            borderRadius: 8,
+            padding: 16,
+            height: 300,
+            overflowY: 'auto',
+            marginBottom: 16,
+            display: 'flex',
+            flexDirection: 'column'
+          }}>
+            {messagesLoading ? (
+              <div style={{ color: '#888', textAlign: 'center', marginTop: 40 }}>Loading messages...</div>
+            ) : messagesError ? (
+              <div style={{ color: '#ff4d4f', textAlign: 'center', marginTop: 40 }}>{messagesError}</div>
+            ) : (
+              messages.map((msg, idx) => (
+                <div key={msg.id || idx} style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
+                  {/* Avatar in chat */}
+                  <img
+                    src={msg.avatar_url || '/default-avatar.png'}
+                    alt="avatar"
+                    style={{ width: 32, height: 32, borderRadius: '50%', objectFit: 'cover', border: '1px solid #4f8cff' }}
+                  />
+                  <div>
+                    <span style={{ color: '#4f8cff', fontWeight: 'bold' }}>{msg.username}</span>
+                    <span style={{ color: '#888', fontSize: 12, marginLeft: 8 }}>{new Date(msg.created_at).toLocaleTimeString()}</span>
+                    <div style={{ color: '#f5f5f5' }}>{msg.content}</div>
+                  </div>
                 </div>
-              </div>
-            ))
-          )}
-          <div ref={chatEndRef} />
+              ))
+            )}
+            <div ref={chatEndRef} />
+          </div>
+          <form onSubmit={handleSend} style={{ display: 'flex', gap: 8 }}>
+            <input
+              type="text"
+              placeholder="Type a message..."
+              value={message}
+              onChange={e => setMessage(e.target.value)}
+              style={{ flex: 1 }}
+              autoFocus
+            />
+            <button type="submit" style={{ minWidth: 80 }}>Send</button>
+          </form>
+          {sendError && <div style={{ color: '#ff4d4f', marginTop: 8 }}>{sendError}</div>}
         </div>
-        <form onSubmit={handleSend} style={{ display: 'flex', gap: 8 }}>
-          <input
-            type="text"
-            placeholder="Type a message..."
-            value={message}
-            onChange={e => setMessage(e.target.value)}
-            style={{ flex: 1 }}
-            autoFocus
-          />
-          <button type="submit" style={{ minWidth: 80 }}>Send</button>
-        </form>
-        {sendError && <div style={{ color: '#ff4d4f', marginTop: 8 }}>{sendError}</div>}
       </div>
     )
   }
