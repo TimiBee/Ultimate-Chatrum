@@ -131,6 +131,17 @@ io.on('connection', (socket) => {
             [messageId, userId],
             (err2) => {
               if (err2) console.error('Error recording message read:', err2);
+              // Fetch the message to get sender info
+              pool.query('SELECT user_id, recipient_id FROM messages WHERE id = ?', [messageId], (err3, rows2) => {
+                if (err3 || !rows2.length) return;
+                const senderId = rows2[0].user_id;
+                const recipientId = rows2[0].recipient_id;
+                // Notify sender (and recipient if private) that message was read
+                io.to(`user_${senderId}`).emit('message read update', { messageId, readerId: userId });
+                if (recipientId) {
+                  io.to(`user_${recipientId}`).emit('message read update', { messageId, readerId: userId });
+                }
+              });
             }
           );
         }

@@ -154,6 +154,21 @@ function App() {
     })
   }, [messages, user])
 
+  // Listen for real-time read receipt updates
+  useEffect(() => {
+    if (socketRef.current && user) {
+      const handleReadUpdate = ({ messageId, readerId }) => {
+        setMessages(prevMsgs => prevMsgs.map(msg =>
+          msg.id === messageId && msg.user_id === user.id ? { ...msg, is_read: true } : msg
+        ));
+      };
+      socketRef.current.on('message read update', handleReadUpdate);
+      return () => {
+        socketRef.current.off('message read update', handleReadUpdate);
+      };
+    }
+  }, [user]);
+
   const handleSubmit = async (e) => {
     e.preventDefault()
     setLoading(true)
