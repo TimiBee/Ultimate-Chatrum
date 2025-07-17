@@ -27,6 +27,9 @@ function App() {
   const [statusInput, setStatusInput] = useState('')
   const [users, setUsers] = useState([])
   const [selectedUser, setSelectedUser] = useState(null)
+  const [isTyping, setIsTyping] = useState(false)
+  const [typingUsers, setTypingUsers] = useState([])
+  const typingTimeoutRef = useRef(null)
 
   // Fetch user list after login
   useEffect(() => {
@@ -101,6 +104,55 @@ function App() {
         .finally(() => setProfileLoading(false))
     }
   }, [user, token])
+
+  // Typing indicator handlers
+  const handleTyping = () => {
+    if (!socketRef.current || !user) return
+    if (!isTyping) {
+      socketRef.current.emit('typing', {
+        userId: user.id,
+        recipientId: selectedUser ? selectedUser.id : undefined
+      })
+      setIsTyping(true)
+    }
+    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current)
+    typingTimeoutRef.current = setTimeout(() => {
+      socketRef.current.emit('stop typing', {
+        userId: user.id,
+        recipientId: selectedUser ? selectedUser.id : undefined
+      })
+      setIsTyping(false)
+    }, 1200)
+  }
+
+  // Listen for typing events
+  useEffect(() => {
+    if (socketRef.current && user) {
+      const handleTypingEvent = ({ userId }) => {
+        if (userId === user.id) return
+        setTypingUsers(prev => prev.includes(userId) ? prev : [...prev, userId])
+      }
+      const handleStopTypingEvent = ({ userId }) => {
+        setTypingUsers(prev => prev.filter(id => id !== userId))
+      }
+      socketRef.current.on('typing', handleTypingEvent)
+      socketRef.current.on('stop typing', handleStopTypingEvent)
+      return () => {
+        socketRef.current.off('typing', handleTypingEvent)
+        socketRef.current.off('stop typing', handleStopTypingEvent)
+      }
+    }
+  }, [user, selectedUser])
+
+  // Emit 'message read' event for each message that is not sent by the current user and is not yet read, when it becomes visible.
+  useEffect(() => {
+    if (!user || !messages.length || !socketRef.current) return
+    messages.forEach(msg => {
+      if (msg.user_id !== user.id && !msg.is_read) {
+        socketRef.current.emit('message read', { messageId: msg.id, userId: user.id })
+      }
+    })
+  }, [messages, user])
 
   const handleSubmit = async (e) => {
     e.preventDefault()
@@ -276,21 +328,37 @@ function App() {
             ) : messagesError ? (
               <div style={{ color: '#ff4d4f', textAlign: 'center', marginTop: 40 }}>{messagesError}</div>
             ) : (
-              messages.map((msg, idx) => (
-                <div key={msg.id || idx} style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
-                  {/* Avatar in chat */}
-                  <img
-                    src={msg.avatar_url || '/default-avatar.png'}
-                    alt="avatar"
-                    style={{ width: 32, height: 32, borderRadius: '50%', objectFit: 'cover', border: '1px solid #4f8cff' }}
-                  />
-                  <div>
-                    <span style={{ color: '#4f8cff', fontWeight: 'bold' }}>{msg.username}</span>
-                    <span style={{ color: '#888', fontSize: 12, marginLeft: 8 }}>{new Date(msg.created_at).toLocaleTimeString()}</span>
-                    <div style={{ color: '#f5f5f5' }}>{msg.content}</div>
+              <>
+                {messages.map((msg, idx) => (
+                  <div key={msg.id || idx} style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
+                    {/* Avatar in chat */}
+                    <img
+                      src={msg.avatar_url || '/default-avatar.png'}
+                      alt="avatar"
+                      style={{ width: 32, height: 32, borderRadius: '50%', objectFit: 'cover', border: '1px solid #4f8cff' }}
+                    />
+                    <div>
+                      <span style={{ color: '#4f8cff', fontWeight: 'bold' }}>{msg.username}</span>
+                      <span style={{ color: '#888', fontSize: 12, marginLeft: 8 }}>{new Date(msg.created_at).toLocaleTimeString()}</span>
+                      <div style={{ color: '#f5f5f5' }}>{msg.content}</div>
+                      {/* Read/unread indicator */}
+                      {msg.user_id !== user.id && (
+                        <span style={{ color: msg.is_read ? '#4caf50' : '#ff9800', fontSize: 12, marginLeft: 4 }}>
+                          {msg.is_read ? 'Read' : 'Unread'}
+                        </span>
+                      )}
+                    </div>
                   </div>
-                </div>
-              ))
+                ))}
+                {/* Typing indicator */}
+                {typingUsers.length > 0 && (
+                  <div style={{ color: '#4f8cff', fontStyle: 'italic', marginBottom: 8 }}>
+                    {typingUsers.length === 1
+                      ? `${users.find(u => u.id === typingUsers[0])?.username || 'Someone'} is typing...`
+                      : 'Several people are typing...'}
+                  </div>
+                )}
+              </>
             )}
             <div ref={chatEndRef} />
           </div>
@@ -300,6 +368,7 @@ function App() {
               placeholder="Type a message..."
               value={message}
               onChange={e => setMessage(e.target.value)}
+              onInput={handleTyping}
               style={{ flex: 1 }}
               autoFocus
             />
