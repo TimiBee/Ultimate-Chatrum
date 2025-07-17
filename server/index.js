@@ -55,9 +55,15 @@ function authenticateToken(req, res, next) {
   });
 }
 
+// Track online users
+const onlineUsers = new Set();
+
 // Socket.IO events
 io.on('connection', (socket) => {
   console.log('A user connected:', socket.id);
+
+  // Store userId after join
+  let currentUserId = null;
 
   // Public or private message
   socket.on('chat message', async (msg) => {
@@ -152,9 +158,18 @@ io.on('connection', (socket) => {
   // Join user-specific room for private messages
   socket.on('join', (userId) => {
     socket.join(`user_${userId}`);
+    currentUserId = userId;
+    onlineUsers.add(userId);
+    // Notify all clients that this user is online
+    io.emit('user online', { userId });
   });
 
   socket.on('disconnect', () => {
+    if (currentUserId) {
+      onlineUsers.delete(currentUserId);
+      // Notify all clients that this user is offline
+      io.emit('user offline', { userId: currentUserId });
+    }
     console.log('User disconnected:', socket.id);
   });
 });
@@ -283,6 +298,11 @@ app.get('/api/users', authenticateToken, (req, res) => {
     if (err) return res.status(500).json({ error: 'Database error.' });
     res.json(results);
   });
+});
+
+// Endpoint to get all currently online users
+app.get('/api/online-users', authenticateToken, (req, res) => {
+  res.json({ online: Array.from(onlineUsers) });
 });
 
 // Multer setup for avatar uploads
