@@ -92,6 +92,52 @@ io.on('connection', (socket) => {
     );
   });
 
+  // Typing indicator events
+  socket.on('typing', (data) => {
+    // data: { userId, recipientId }
+    if (data && data.userId) {
+      if (data.recipientId) {
+        // Private chat: notify recipient only
+        io.to(`user_${data.recipientId}`).emit('typing', { userId: data.userId });
+      } else {
+        // Public chat: notify all except sender
+        socket.broadcast.emit('typing', { userId: data.userId });
+      }
+    }
+  });
+
+  socket.on('stop typing', (data) => {
+    // data: { userId, recipientId }
+    if (data && data.userId) {
+      if (data.recipientId) {
+        io.to(`user_${data.recipientId}`).emit('stop typing', { userId: data.userId });
+      } else {
+        socket.broadcast.emit('stop typing', { userId: data.userId });
+      }
+    }
+  });
+
+  // Mark message as read
+  socket.on('message read', ({ messageId, userId }) => {
+    if (!messageId || !userId) return;
+    pool.query(
+      'SELECT id FROM message_reads WHERE message_id = ? AND user_id = ?',
+      [messageId, userId],
+      (err, rows) => {
+        if (err) return;
+        if (rows.length === 0) {
+          pool.query(
+            'INSERT INTO message_reads (message_id, user_id) VALUES (?, ?)',
+            [messageId, userId],
+            (err2) => {
+              if (err2) console.error('Error recording message read:', err2);
+            }
+          );
+        }
+      }
+    );
+  });
+
   // Join user-specific room for private messages
   socket.on('join', (userId) => {
     socket.join(`user_${userId}`);
@@ -155,16 +201,22 @@ app.get('/api/messages', authenticateToken, (req, res) => {
   let sql, params;
   if (recipientId) {
     // Private messages between user and recipient
-    sql = `SELECT messages.id, messages.content, messages.created_at, users.username, messages.recipient_id FROM messages JOIN users ON messages.user_id = users.id WHERE (messages.user_id = ? AND messages.recipient_id = ?) OR (messages.user_id = ? AND messages.recipient_id = ?) ORDER BY messages.created_at DESC LIMIT ?`;
-    params = [userId, recipientId, recipientId, userId, lim];
+    sql = `SELECT messages.id, messages.content, messages.created_at, users.username, users.avatar_url, messages.recipient_id, (
+      SELECT COUNT(*) FROM message_reads WHERE message_id = messages.id AND user_id = ?
+    ) AS is_read FROM messages JOIN users ON messages.user_id = users.id WHERE (messages.user_id = ? AND messages.recipient_id = ?) OR (messages.user_id = ? AND messages.recipient_id = ?) ORDER BY messages.created_at DESC LIMIT ?`;
+    params = [userId, userId, recipientId, recipientId, userId, lim];
   } else {
     // Public messages
-    sql = `SELECT messages.id, messages.content, messages.created_at, users.username, messages.recipient_id FROM messages JOIN users ON messages.user_id = users.id WHERE messages.recipient_id IS NULL ORDER BY messages.created_at DESC LIMIT ?`;
-    params = [lim];
+    sql = `SELECT messages.id, messages.content, messages.created_at, users.username, users.avatar_url, messages.recipient_id, (
+      SELECT COUNT(*) FROM message_reads WHERE message_id = messages.id AND user_id = ?
+    ) AS is_read FROM messages JOIN users ON messages.user_id = users.id WHERE messages.recipient_id IS NULL ORDER BY messages.created_at DESC LIMIT ?`;
+    params = [userId, lim];
   }
   pool.query(sql, params, (err, rows) => {
     if (err) return res.status(500).json({ error: 'Database error.' });
-    res.json(rows.reverse());
+    // Convert is_read from count to boolean
+    const result = rows.map(row => ({ ...row, is_read: !!row.is_read }));
+    res.json(result.reverse());
   });
 });
 
